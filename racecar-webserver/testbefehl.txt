@@ -1,0 +1,2 @@
+Als Telemetriedaten
+mosquitto_pub -h sv02.tobicloud.eu -t racecar/telemetry -m '{"lat":"49.5890", "lng":"11.0078", "speed":"45.5", "lte":"-70 dBm"}'

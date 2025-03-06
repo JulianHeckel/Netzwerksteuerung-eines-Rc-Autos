@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RaceCar Telemetrie & Steuerung</title>
+  <!-- TailwindCSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <!-- Socket.IO -->
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body class="bg-gray-100">
+  <header class="bg-blue-600 text-white p-4 text-center">
+    <h1 class="text-2xl font-bold">RaceCar Telemetrie & Steuerung</h1>
+  </header>
+  <main class="p-4">
+    <!-- Map Container -->
+    <div id="map" class="w-full h-96 rounded shadow-lg"></div>
+    <!-- Telemetrie Info -->
+    <div class="mt-4 p-4 bg-white rounded shadow">
+      <p id="speed" class="text-lg">Geschwindigkeit: N/A</p>
+      <p id="lte" class="text-lg">LTE-Verbindungsqualität: N/A</p>
+    </div>
+    <!-- Hinweis für PC-Steuerung -->
+    <div class="mt-4 text-center">
+      <p class="font-semibold">Steuerung: WSAD zum Fahren, Leertaste = Stop</p>
+      <p class="mt-2 text-gray-600">Bitte klicke in das Fenster, um Tastatureingaben zu ermöglichen.</p>
+    </div>
+  </main>
+  <script>
+    // Karte initialisieren: Startposition Erlangen, Bayern (ca. 49.59, 11.00)
+    var map = L.map('map').setView([49.59, 11.00], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+    
+    // Marker hinzufügen
+    var marker = L.marker([49.59, 11.00]).addTo(map)
+                     .bindPopup('RaceCar')
+                     .openPopup();
+    
+    // Socket.IO Verbindung
+    const socket = io();
+    
+    // Telemetrie-Daten empfangen
+    socket.on('telemetry', function(data) {
+      console.log('Telemetrie empfangen:', data);
+      try {
+        var telemetry = JSON.parse(data);
+        // Aktualisiere Marker-Position
+        if (telemetry.lat && telemetry.lng) {
+          var lat = parseFloat(telemetry.lat);
+          var lng = parseFloat(telemetry.lng);
+          marker.setLatLng([lat, lng]);
+          map.setView([lat, lng]);
+        }
+        // Geschwindigkeit anzeigen
+        if (telemetry.speed) {
+          document.getElementById('speed').innerText = 'Geschwindigkeit: ' + telemetry.speed + ' km/h';
+        }
+        // LTE-Verbindungsqualität anzeigen
+        if (telemetry.lte) {
+          document.getElementById('lte').innerText = 'LTE-Verbindungsqualität: ' + telemetry.lte;
+        }
+      } catch (e) {
+        console.error('Fehler beim Parsen der Telemetrie:', e);
+      }
+    });
+    
+    // Variablen zur Wiederholung von Steuerbefehlen
+    let currentCommand = null;
+    let repeatTimer = null;
+    const REPEAT_INTERVAL = 200; // in Millisekunden
+
+    // Funktion, die den Befehl sendet
+    function sendControlCommand(cmd) {
+      socket.emit('control', cmd);
+      console.log('Steuerbefehl gesendet:', cmd);
+    }
+
+    // Bei Tastendruck (keydown) den Befehl starten, sofern noch nicht aktiv
+    document.addEventListener('keydown', function(e) {
+      const key = e.key.toLowerCase();
+      let cmd = '';
+      if (['w', 'a', 's', 'd'].includes(key)) {
+        cmd = key;
+      } else if (e.code === 'Space') {
+        cmd = 'stop';
+      }
+      // Starte Wiederholung, wenn ein gültiger Befehl vorliegt und nicht bereits aktiv ist
+      if (cmd !== '' && currentCommand !== cmd) {
+        currentCommand = cmd;
+        // Sofort senden und dann alle REPEAT_INTERVAL ms wiederholen
+        sendControlCommand(currentCommand);
+        repeatTimer = setInterval(() => {
+          sendControlCommand(currentCommand);
+        }, REPEAT_INTERVAL);
+      }
+    });
+
+    // Beim Loslassen (keyup) stoppen
+    document.addEventListener('keyup', function(e) {
+      const key = e.key.toLowerCase();
+      if ((['w', 'a', 's', 'd'].includes(key) && currentCommand === key) ||
+          (e.code === 'Space' && currentCommand === 'stop')) {
+        clearInterval(repeatTimer);
+        currentCommand = null;
+        repeatTimer = null;
+      }
+    });
+  </script>
+</body>
+</html>
