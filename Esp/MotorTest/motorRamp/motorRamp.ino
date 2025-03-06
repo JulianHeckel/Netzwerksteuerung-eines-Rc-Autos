@@ -8,9 +8,6 @@
 ESC myESC (ESC_PIN, SPEED_MIN, SPEED_MAX, 500);
 int oESC; 
 
-Servo myservo;
-int servoPin = 19;
-int pos = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -23,10 +20,10 @@ void loop() {
     myESC.speed(oESC);                                    // tell ESC to go to the oESC speed value
     delay(10);                                            // waits 10ms for the ESC to reach speed
   }
-  delay(1000);
+  delay(100);
   for (oESC = SPEED_MAX; oESC >= SPEED_MIN; oESC -= 1) {  // goes from 2000 microseconds to 1000 microseconds
     myESC.speed(oESC);                                    // tell ESC to go to the oESC speed value
     delay(10);                                            // waits 10ms for the ESC to reach speed  
    }
-  delay(50);  
+  delay(500);  
 }
