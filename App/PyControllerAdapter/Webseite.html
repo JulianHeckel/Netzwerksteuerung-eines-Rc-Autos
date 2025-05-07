@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live-Kamerastream und Controller-Eingaben</title>
+    <!-- Include MQTT.js from CDN -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            position: relative;
+            font-family: Arial, sans-serif;
+        }
+        /* Fullscreen video feed 
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: 1;
+        }
+        /* Controller inputs positioned at bottom right */
+        #controller-inputs {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border: 2px solid white;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            z-index: 3;
+        }
+        .input-display {
+            margin-bottom: 10px;
+        }
+        .bar {
+            width: 100px;
+            height: 20px;
+            background-color: lightgray;
+            position: relative;
+            overflow: hidden;
+        }
+        .bar-fill {
+            height: 100%;
+            background-color: green;
+            position: absolute;
+            top: 0;
+            left: 0;
+            text-align: center;
+            color: black;
+            font-size: 12px;
+            line-height: 20px;
+        }
+        /* For the steering bar: fill originates from center */
+        #steering {
+            background-color: transparent;
+            position: relative;
+        }
+        #steering-fill {
+            height: 100%;
+            background-color: green;
+            position: absolute;
+            top: 0;
+            text-align: center;
+            color: white;
+            font-size: 12px;
+            line-height: 20px;
+        }
+        #steering-marker {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 1px;
+            height: 100%;
+            background-color: red;
+        }
+        /* Map positioned at top right */
+        #map {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            background-color: #ccc;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            text-align: center;
+            line-height: 150px;
+            color: #000;
+            font-weight: bold;
+            z-index: 2;
+        }
+        /* Tachometer positioned at bottom left */
+        #tachometer {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 200px;
+            height: 150px;
+            background-color: #ccc;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            text-align: center;
+            line-height: 150px;
+            color: #000;
+            font-weight: bold;
+            z-index: 2;
+        }
+        /* Slider style */
+        input[type=range] {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <!-- Map placeholder -->
+    <div id="map">Map</div>
+
+    <!-- Tachometer placeholder -->
+    <div id="tachometer">Tachometer</div>
+
+    <video id="video" autoplay></video>
+
+    <div id="controller-inputs">
+        <div class="input-display">
+            <strong>Tasten:</strong> <span id="buttons">Kein Gamepad</span>
+        </div>
+        <div class="input-display">
+            <strong>Achsen:</strong> <span id="axes">-</span>
+        </div>
+        <div class="input-display">
+            <strong>Trigger Links:</strong> 
+            <div class="bar">
+                <div id="trigger-left" class="bar-fill"></div>
+            </div>
+        </div>
+        <div class="input-display">
+            <strong>Trigger Rechts:</strong> 
+            <div class="bar">
+                <div id="trigger-right" class="bar-fill"></div>
+            </div>
+        </div>
+        <div class="input-display">
+            <strong>LSB (Steering):</strong> 
+            <div class="bar" id="steering">
+                <div id="steering-fill"></div>
+                <div id="steering-marker"></div>
+            </div>
+        </div>
+        <div class="input-display">
+            <strong>Skill Level:</strong> <span id="skill-level-value">10</span>% 
+            <input type="range" id="skill-slider" min="1" max="100" value="10">
+        </div>
+    </div>
+    <script>
+        // MQTT settings for connection to backend (if needed)
+        const broker = "sv02.tobicloud.eu";
+        const port = 1883; // Ensure your broker supports MQTT over WebSocket on this port
+        const topic_drive = "racecar/drive";
+        const topic_steering = "racecar/steering";
+        const mqttUrl = `ws://${broker}:${port}`;
+        const mqttClient = mqtt.connect(mqttUrl);
+
+        mqttClient.on('connect', () => {
+            console.log("MQTT connected");
+        });
+        mqttClient.on('error', (error) => {
+            console.error("MQTT Connection Error: ", error);
+        });
+
+        // Open WebSocket connection to backend
+        const ws = new WebSocket("ws://localhost:8000/ws");
+        ws.onopen = () => {
+            console.log("WebSocket connected to backend");
+        };
+        ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+        };
+        ws.onmessage = (msg) => {
+            console.log("WebSocket received:", msg.data);
+        };
+
+        // Function to send control messages via WebSocket with debug output
+        function sendControl(topic, message) {
+            if (ws.readyState === WebSocket.OPEN) {
+                console.log("sendControl:", topic, message);
+                ws.send(JSON.stringify({ topic: topic, message: message }));
+            } else {
+                console.warn("WebSocket not open. Ready state:", ws.readyState);
+            }
+        }
+
+        // Start camera stream
+        async function startCamera() {
+            const video = document.getElementById('video');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (error) {
+                console.error('Fehler beim Zugriff auf die Kamera:', error);
+            }
+        }
+
+        // Gamepad API for controller input and WebSocket publishing
+        function handleGamepadInput() {
+            const buttonsDisplay = document.getElementById('buttons');
+            const axesDisplay = document.getElementById('axes');
+            const triggerLeftDisplay = document.getElementById('trigger-left');
+            const triggerRightDisplay = document.getElementById('trigger-right');
+            const steeringFill = document.getElementById('steering-fill');
+            const skillSlider = document.getElementById('skill-slider');
+            const skillLevelText = document.getElementById('skill-level-value');
+
+            // Update displayed skill level when slider changes
+            skillSlider.addEventListener('input', () => {
+                skillLevelText.textContent = skillSlider.value;
+            });
+
+            window.addEventListener('gamepadconnected', (event) => {
+                const gamepad = event.gamepad;
+                console.log('Gamepad verbunden:', gamepad.id);
+                buttonsDisplay.textContent = gamepad.id;
+
+                function updateGamepadStatus() {
+                    const gamepads = navigator.getGamepads();
+                    const gp = gamepads[gamepad.index];
+                    if (gp) {
+                        axesDisplay.textContent = gp.axes.map(axis => axis.toFixed(2)).join(', ');
+
+                        // Standard indices:
+                        // gp.buttons[6] = left trigger (0 to 1)
+                        // gp.buttons[7] = right trigger (0 to 1)
+                        // gp.axes[0] = steering (-1 to 1)
+                        const leftTrigger = gp.buttons[6] ? gp.buttons[6].value : 0;
+                        const rightTrigger = gp.buttons[7] ? gp.buttons[7].value : 0;
+                        const steering = gp.axes[0] || 0;
+                        
+                        // Update trigger bars with percentage values
+                        triggerLeftDisplay.style.width = (leftTrigger * 100) + '%';
+                        triggerLeftDisplay.textContent = Math.round(leftTrigger * 100) + '%';
+
+                        triggerRightDisplay.style.width = (rightTrigger * 100) + '%';
+                        triggerRightDisplay.textContent = Math.round(rightTrigger * 100) + '%';
+
+                        // Update steering bar: center is 0, fill left/right accordingly
+                        if (steering >= 0) {
+                            steeringFill.style.left = "50%";
+                            const widthPercent = steering * 50;
+                            steeringFill.style.width = widthPercent + '%';
+                        } else {
+                            const widthPercent = Math.abs(steering) * 50;
+                            steeringFill.style.left = (50 - widthPercent) + '%';
+                            steeringFill.style.width = widthPercent + '%';
+                        }
+                        steeringFill.textContent = (Math.round(steering * 100) / 100);
+
+                        // Calculate values using current skill level
+                        const currentSkill = parseInt(skillSlider.value);
+                        const lt_value = Math.round((-leftTrigger * 100) * (currentSkill / 100));
+                        const rt_value = Math.round((rightTrigger * 100) * (currentSkill / 100));
+                        const lsb_value = Math.round((((steering) + 1) * 50) * (currentSkill / 100));
+                        const diff = rt_value - lt_value;
+
+                        // Publish messages via WebSocket
+                        sendControl(topic_drive, String(diff));
+                        sendControl(topic_steering, String(lsb_value));
+                    }
+                    requestAnimationFrame(updateGamepadStatus);
+                }
+                updateGamepadStatus();
+            });
+
+            window.addEventListener('gamepaddisconnected', (event) => {
+                console.log('Gamepad getrennt:', event.gamepad.id);
+                buttonsDisplay.textContent = "Kein Gamepad";
+            });
+        }
+
+        // Start camera and gamepad input handling
+        startCamera();
+        handleGamepadInput();
+    </script>
+</body>
+</html>
